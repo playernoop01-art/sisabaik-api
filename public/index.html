@@ -3,7 +3,7 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>SisaBaik API — Chapter 5</title>
+    <title>SisaBaik API Chapter 7</title>
     <style>
       body {
         max-width: 70rem;
@@ -62,35 +62,41 @@
         color: #f3fbf8;
         border-radius: 0.5rem;
       }
+      :focus-visible {
+        outline: 3px solid #18332d;
+        outline-offset: 3px;
+      }
     </style>
     <script src="app.js" defer></script>
   </head>
   <body>
+    <a href="#konten-utama">Lewati ke konten utama</a>
     <header>
-      <p>Chapter 5 · Backend awal</p>
+      <p>Chapter 7 REST API dan PostgreSQL</p>
       <h1>SisaBaik API</h1>
-      <p>
-        Halaman ini disajikan oleh Express dan mengambil data dari
-        <code>/api/penawaran</code>.
-      </p>
+      <p>Data fiktif untuk praktikum lokal, bukan layanan transaksi publik.</p>
     </header>
-    <main>
+    <main id="konten-utama" tabindex="-1">
       <section aria-labelledby="judul-katalog">
         <h2 id="judul-katalog">Penawaran tersedia</h2>
-        <p id="status" role="status" aria-live="polite">Memuat data…</p>
+        <p id="status" role="status" aria-live="polite">Memuat data...</p>
         <div id="katalog" class="grid"></div>
       </section>
       <section aria-labelledby="judul-pesanan">
         <h2 id="judul-pesanan">Uji pembuatan pesanan</h2>
+        <p>
+          Pakai email akun pembeli fiktif pada database, misalnya
+          siti.pembeli@example.test. Email ini belum membuktikan login.
+        </p>
         <form id="form-pesanan">
-          <label for="nama">Nama pemesan</label>
-          <input id="nama" name="namaPemesan" minlength="3" required />
+          <label for="nama">Email pembeli latihan</label>
+          <input id="nama" name="emailPembeli" type="email" required />
           <label for="penawaran">ID penawaran</label>
           <input
             id="penawaran"
             name="penawaranId"
-            type="number"
-            min="1"
+            inputmode="numeric"
+            pattern="[1-9][0-9]{0,18}"
             required
           />
           <label for="kuantitas">Kuantitas</label>
@@ -99,9 +105,11 @@
             name="kuantitas"
             type="number"
             min="1"
+            max="1000"
+            step="1"
             required
           />
-          <button type="submit">Kirim pesanan</button>
+          <button type="submit">Kirim pesanan latihan</button>
         </form>
         <p id="status-pesanan" role="status" aria-live="polite"></p>
         <pre id="hasil-pesanan">Belum ada respons.</pre>
