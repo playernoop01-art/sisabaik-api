@@ -10,7 +10,8 @@
     "db:order": "node --env-file=.env scripts/create-order.js",
     "api:test:chapter7": "node scripts/uji-api.js",
     "auth:test": "node --env-file=.env scripts/uji-auth.js",
-    "penyedia:verifikasi": "node --env-file=.env scripts/verifikasipenyedia.js"
+    "test:auth": "node --env-file=.env scripts/uji-auth.js",
+    "penyedia:verifikasi": "node --env-file=.env scripts/verifikasi-penyedia.js"
   },
   "engines": {
     "node": ">=22"

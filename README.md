@@ -3,12 +3,14 @@
 SisaBaik adalah aplikasi untuk membantu penyaluran makanan berlebih agar dapat dimanfaatkan dan mengurangi pemborosan makanan.
 
 ## Teknologi
+
 - Node.js
 - Express.js
 - PostgreSQL
 - HTML, CSS, dan JavaScript
 
 ## Fitur
+
 - Registrasi dan login pengguna
 - Autentikasi dan otorisasi berdasarkan peran (RBAC)
 - Registrasi penyedia makanan
@@ -17,11 +19,13 @@ SisaBaik adalah aplikasi untuk membantu penyaluran makanan berlebih agar dapat d
 - Pemesanan makanan
 
 ## Persyaratan
+
 - Node.js
 - PostgreSQL
 - Database sisabaik_dev
 
 ## Cara Menjalankan
+
 1. Instal dependensi:
 
    npm install
@@ -40,9 +44,10 @@ SisaBaik adalah aplikasi untuk membantu penyaluran makanan berlebih agar dapat d
 
 Jalankan server terlebih dahulu, kemudian buka terminal lain:
 
-   node --env-file=.env scripts/uji-auth.js
+node --env-file=.env scripts/uji-auth.js
 
 ## Struktur Proyek
+
 - database/ : skema dan data database
 - public/ : antarmuka web
 - scripts/ : skrip pengujian
