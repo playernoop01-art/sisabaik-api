@@ -1,17 +1,10 @@
 import { pool } from "../db/pool.js";
 import { transaksi } from "../db/transaksi.js";
 import { HttpError, metaHalaman } from "../lib/api.js";
-
-const headerSql = `
-  SELECT
-    ps.*,
-    u.nama_lengkap AS nama_pemesan,
-    py.nama_usaha AS penyedia
-  FROM pesanan ps
-  JOIN pengguna u ON u.id = ps.pembeli_id
-  JOIN penyedia py ON py.id = ps.penyedia_id
-`;
-
+const headerSql = `SELECT ps.*, u.nama_lengkap AS nama_pemesan,
+ py.nama_usaha AS penyedia FROM pesanan ps
+ JOIN pengguna u ON u.id=ps.pembeli_id
+ JOIN penyedia py ON py.id=ps.penyedia_id`;
 function keHeader(row) {
   return {
     id: String(row.id),
@@ -25,25 +18,34 @@ function keHeader(row) {
     dibuatPada: new Date(row.dibuat_pada).toISOString(),
   };
 }
-
-async function bacaDetail(id, client) {
-  const header = await client.query(`${headerSql} WHERE ps.id = $1`, [id]);
-
+function cakupan(pengguna) {
+  if (pengguna.peran === "pembeli") {
+    return { kolom: "ps.pembeli_id", id: pengguna.id };
+  }
+  if (pengguna.peran === "penyedia" && pengguna.penyediaId) {
+    return { kolom: "ps.penyedia_id", id: pengguna.penyediaId };
+  }
+  throw new HttpError(
+    403,
+    "ROLE_FORBIDDEN",
+    "Profil atau peran tidak diizinkan.",
+  );
+}
+async function bacaDetail(id, client, pengguna) {
+  const scope = cakupan(pengguna);
+  const header = await client.query(
+    `${headerSql} WHERE ps.id=$1 AND ${scope.kolom}=$2`,
+    [id, scope.id],
+  );
   if (!header.rowCount) {
     throw new HttpError(404, "ORDER_NOT_FOUND", "Pesanan tidak ditemukan.");
   }
-
   const detail = await client.query(
-    `
-      SELECT dp.*, p.nama
-      FROM detail_pesanan dp
-      JOIN penawaran p ON p.id = dp.penawaran_id
-      WHERE dp.pesanan_id = $1
-      ORDER BY dp.penawaran_id
-    `,
+    `SELECT dp.*, p.nama FROM detail_pesanan dp
+ JOIN penawaran p ON p.id=dp.penawaran_id
+ WHERE dp.pesanan_id=$1 ORDER BY dp.penawaran_id`,
     [id],
   );
-
   return {
     ...keHeader(header.rows[0]),
     items: detail.rows.map((row) => ({
@@ -56,44 +58,34 @@ async function bacaDetail(id, client) {
     })),
   };
 }
-
-export function detailPesanan(id) {
-  return transaksi((client) => bacaDetail(id, client), true);
+export function detailPesanan(id, pengguna) {
+  return transaksi((client) => bacaDetail(id, client, pengguna), true);
 }
-
-export function daftarPesanan(paging) {
+export function daftarPesanan(paging, pengguna) {
+  const scope = cakupan(pengguna);
   return transaksi(async (client) => {
     const count = await client.query(
-      "SELECT COUNT(*)::int AS jumlah FROM pesanan",
+      `SELECT COUNT(*)::int AS jumlah FROM pesanan ps WHERE ${scope.kolom}=$1`,
+      [scope.id],
     );
-
     const hasil = await client.query(
-      `${headerSql}
-       ORDER BY ps.id DESC
-       LIMIT $1 OFFSET $2`,
-      [paging.limit, paging.offset],
+      `${headerSql} WHERE ${scope.kolom}=$1
+ ORDER BY ps.id DESC LIMIT $2 OFFSET $3`,
+      [scope.id, paging.limit, paging.offset],
     );
-
     return {
       data: hasil.rows.map(keHeader),
       meta: metaHalaman(count.rows[0].jumlah, paging),
     };
   }, true);
 }
-
-export function buatPesanan(data) {
+export function buatPesanan(data, pengguna) {
   return transaksi(async (client) => {
     const pembeli = await client.query(
-      `
-        SELECT id
-        FROM pengguna
-        WHERE email = $1
-          AND peran = 'pembeli'
-          AND aktif = TRUE
-      `,
-      [data.emailPembeli],
+      `SELECT id FROM pengguna WHERE id=$1
+ AND peran='pembeli' AND aktif=TRUE`,
+      [data.pembeliId],
     );
-
     if (!pembeli.rowCount) {
       throw new HttpError(
         404,
@@ -101,17 +93,17 @@ export function buatPesanan(data) {
         "Pembeli aktif tidak ditemukan.",
       );
     }
-
     const detail = [];
     let penyediaId;
     let totalNormal = 0n;
-
     for (const baris of data.items) {
       const hasil = await client.query(
-        "SELECT * FROM penawaran WHERE id = $1 FOR UPDATE",
+        `SELECT p.* FROM penawaran p JOIN penyedia py ON py.id=p.penyedia_id
+ JOIN pengguna u ON u.id=py.pengguna_id WHERE p.id=$1
+ AND u.peran='penyedia' AND u.aktif=TRUE
+ AND py.status_verifikasi='terverifikasi' FOR UPDATE OF p`,
         [baris.penawaranId],
       );
-
       if (!hasil.rowCount) {
         throw new HttpError(
           404,
@@ -119,17 +111,11 @@ export function buatPesanan(data) {
           "Penawaran tidak ditemukan.",
         );
       }
-
       const item = hasil.rows[0];
-
       const waktu = await client.query(
-        `
-          SELECT $1::timestamptz > clock_timestamp()
-            AS belum_berakhir
-        `,
+        `SELECT $1::timestamptz > clock_timestamp() AS belum_berakhir`,
         [item.berakhir_pada],
       );
-
       if (item.status !== "aktif" || !waktu.rows[0].belum_berakhir) {
         throw new HttpError(
           409,
@@ -137,7 +123,6 @@ export function buatPesanan(data) {
           "Penawaran tidak tersedia.",
         );
       }
-
       if (item.stok < baris.kuantitas) {
         throw new HttpError(
           409,
@@ -145,9 +130,7 @@ export function buatPesanan(data) {
           `Stok ${item.nama} tidak mencukupi.`,
         );
       }
-
       penyediaId ??= String(item.penyedia_id);
-
       if (penyediaId !== String(item.penyedia_id)) {
         throw new HttpError(
           409,
@@ -155,9 +138,7 @@ export function buatPesanan(data) {
           "Satu pesanan harus dari satu penyedia.",
         );
       }
-
       totalNormal += BigInt(item.harga_normal) * BigInt(baris.kuantitas);
-
       if (totalNormal > 999999999999n) {
         throw new HttpError(
           409,
@@ -165,37 +146,19 @@ export function buatPesanan(data) {
           "Total melampaui kapasitas skema.",
         );
       }
-
-      detail.push({
-        ...baris,
-        item,
-      });
+      detail.push({ ...baris, item });
     }
-
     const pesanan = await client.query(
-      `
-        INSERT INTO pesanan (pembeli_id, penyedia_id)
-        VALUES ($1, $2)
-        RETURNING id
-      `,
+      `INSERT INTO pesanan (pembeli_id, penyedia_id)
+ VALUES ($1,$2) RETURNING id`,
       [pembeli.rows[0].id, penyediaId],
     );
-
     const id = pesanan.rows[0].id;
-
     for (const { item, kuantitas } of detail) {
       await client.query(
-        `
-          INSERT INTO detail_pesanan (
-            pesanan_id,
-            penawaran_id,
-            penyedia_id,
-            kuantitas,
-            harga_normal_satuan,
-            harga_penawaran_satuan
-          )
-          VALUES ($1, $2, $3, $4, $5, $6)
-        `,
+        `INSERT INTO detail_pesanan (pesanan_id, penawaran_id, penyedia_id,
+ kuantitas, harga_normal_satuan, harga_penawaran_satuan)
+ VALUES ($1,$2,$3,$4,$5,$6)`,
         [
           id,
           item.id,
@@ -205,40 +168,21 @@ export function buatPesanan(data) {
           item.harga_penawaran,
         ],
       );
-
       await client.query(
-        `
-          UPDATE penawaran
-          SET
-            stok = stok - $1,
-            status = CASE
-              WHEN stok - $1 = 0 THEN 'habis'
-              ELSE status
-            END
-          WHERE id = $2
-        `,
+        `UPDATE penawaran SET stok=stok-$1,
+ status=CASE WHEN stok-$1=0 THEN 'habis' ELSE status END
+ WHERE id=$2`,
         [kuantitas, item.id],
       );
     }
-
     await client.query(
-      `
-        UPDATE pesanan ps
-        SET
-          total_transaksi = r.total,
-          nilai_stok_terselamatkan = r.nilai_stok
-        FROM (
-          SELECT
-            SUM(subtotal) AS total,
-            SUM(nilai_stok) AS nilai_stok
-          FROM detail_pesanan
-          WHERE pesanan_id = $1
-        ) r
-        WHERE ps.id = $1
-      `,
+      `UPDATE pesanan ps SET total_transaksi=r.total,
+ nilai_stok_terselamatkan=r.nilai_stok
+ FROM (SELECT SUM(subtotal) AS total, SUM(nilai_stok) AS nilai_stok
+ FROM detail_pesanan WHERE pesanan_id=$1) r
+ WHERE ps.id=$1`,
       [id],
     );
-
-    return bacaDetail(id, client);
+    return bacaDetail(id, client, pengguna);
   });
 }
