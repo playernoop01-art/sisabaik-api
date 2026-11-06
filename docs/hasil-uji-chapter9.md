@@ -151,7 +151,7 @@ Screenshot berikut menjadi bukti pelaksanaan pengujian:
 6. **Screenshot 6 – Terminal Build:** bukti keberhasilan perintah `npm run build`.
 
 Simpan screenshot pada folder:
-
+c:\Users\Asus TUF\OneDrive\Pictures\Screenshots\06-terminal-build.png.png
 `docs/screenshots/`
 
 ## 8. Kesimpulan
