@@ -1,0 +1,429 @@
+import { transaksi } from "../db/transaksi.js";
+import { HttpError, metaHalaman } from "../lib/api.js";
+
+// ======================================================
+// HEADER PESANAN
+// ======================================================
+
+const headerSql = `
+  SELECT
+    ps.*,
+    u.nama_lengkap AS nama_pemesan,
+    py.nama_usaha AS penyedia
+  FROM pesanan ps
+  JOIN pengguna u
+    ON u.id = ps.pembeli_id
+  JOIN penyedia py
+    ON py.id = ps.penyedia_id
+`;
+
+// ======================================================
+// FORMAT TANGGAL
+// ======================================================
+
+function formatTanggal(nilai) {
+  return nilai ? new Date(nilai).toISOString() : null;
+}
+
+// ======================================================
+// FORMAT DATA HEADER PESANAN
+// ======================================================
+
+function keHeader(row) {
+  return {
+    id: String(row.id),
+    pembeliId: String(row.pembeli_id),
+    penyediaId: String(row.penyedia_id),
+
+    namaPemesan: row.nama_pemesan,
+    penyedia: row.penyedia,
+
+    status: row.status,
+
+    metodePembayaran: row.metode_pembayaran,
+    statusPembayaran: row.status_pembayaran,
+
+    dibayarPada: formatTanggal(row.dibayar_pada),
+    dikonfirmasiPada: formatTanggal(row.dikonfirmasi_pada),
+    siapPada: formatTanggal(row.siap_pada),
+    selesaiPada: formatTanggal(row.selesai_pada),
+    dibatalkanPada: formatTanggal(row.dibatalkan_pada),
+
+    jenisPembatalan: row.jenis_pembatalan,
+    alasanPembatalan: row.alasan_pembatalan,
+
+    total: Number(row.total_transaksi),
+    nilaiStokTerselamatkan: Number(row.nilai_stok_terselamatkan),
+
+    dibuatPada: formatTanggal(row.dibuat_pada),
+  };
+}
+
+// ======================================================
+// PEMBATASAN AKSES BERDASARKAN PERAN
+// ======================================================
+
+function cakupan(pengguna) {
+  if (pengguna.peran === "pembeli") {
+    return {
+      kolom: "ps.pembeli_id",
+      id: pengguna.id,
+    };
+  }
+
+  if (pengguna.peran === "penyedia" && pengguna.penyediaId) {
+    return {
+      kolom: "ps.penyedia_id",
+      id: pengguna.penyediaId,
+    };
+  }
+
+  throw new HttpError(
+    403,
+    "ROLE_FORBIDDEN",
+    "Profil atau peran tidak diizinkan.",
+  );
+}
+
+// ======================================================
+// MEMBACA DETAIL PESANAN
+// ======================================================
+
+async function bacaDetail(id, client, pengguna) {
+  const scope = cakupan(pengguna);
+
+  // Memeriksa kepemilikan pesanan.
+  const header = await client.query(
+    `
+      ${headerSql}
+      WHERE ps.id = $1
+        AND ${scope.kolom} = $2
+    `,
+    [id, scope.id],
+  );
+
+  if (!header.rowCount) {
+    throw new HttpError(404, "ORDER_NOT_FOUND", "Pesanan tidak ditemukan.");
+  }
+
+  // Mengambil snapshot transaksi.
+  // Tidak bergantung pada kondisi penawaran terbaru.
+  const detail = await client.query(
+    `
+      SELECT
+        dp.*
+      FROM detail_pesanan dp
+      WHERE dp.pesanan_id = $1
+      ORDER BY dp.penawaran_id
+    `,
+    [id],
+  );
+
+  return {
+    ...keHeader(header.rows[0]),
+
+    items: detail.rows.map((row) => ({
+      penawaranId: String(row.penawaran_id),
+
+      nama: row.nama_penawaran,
+      satuan: row.satuan,
+
+      kuantitas: Number(row.kuantitas),
+
+      hargaSatuan: Number(row.harga_penawaran_satuan),
+
+      subtotal: Number(row.subtotal),
+
+      nilaiStokTerselamatkan: Number(row.nilai_stok),
+    })),
+  };
+}
+
+// ======================================================
+// DETAIL PESANAN
+// ======================================================
+
+export function detailPesanan(id, pengguna) {
+  return transaksi((client) => bacaDetail(id, client, pengguna), true);
+}
+
+// ======================================================
+// DAFTAR PESANAN
+// ======================================================
+
+export function daftarPesanan(paging, pengguna) {
+  const scope = cakupan(pengguna);
+
+  return transaksi(async (client) => {
+    // Menghitung jumlah pesanan.
+    const count = await client.query(
+      `
+        SELECT COUNT(*)::int AS jumlah
+        FROM pesanan ps
+        WHERE ${scope.kolom} = $1
+      `,
+      [scope.id],
+    );
+
+    // Mengambil daftar pesanan.
+    const hasil = await client.query(
+      `
+        ${headerSql}
+        WHERE ${scope.kolom} = $1
+        ORDER BY ps.id DESC
+        LIMIT $2
+        OFFSET $3
+      `,
+      [scope.id, paging.limit, paging.offset],
+    );
+
+    return {
+      data: hasil.rows.map(keHeader),
+
+      meta: metaHalaman(count.rows[0].jumlah, paging),
+    };
+  }, true);
+}
+
+// ======================================================
+// MEMBUAT PESANAN
+// ======================================================
+
+export function buatPesanan(data, pengguna) {
+  return transaksi(async (client) => {
+    // ----------------------------------------------
+    // 1. MEMERIKSA AKUN PEMBELI
+    // ----------------------------------------------
+
+    const pembeli = await client.query(
+      `
+        SELECT id
+        FROM pengguna
+        WHERE id = $1
+          AND peran = 'pembeli'
+          AND aktif = TRUE
+      `,
+      [data.pembeliId],
+    );
+
+    if (!pembeli.rowCount) {
+      throw new HttpError(
+        404,
+        "BUYER_NOT_FOUND",
+        "Pembeli aktif tidak ditemukan.",
+      );
+    }
+
+    // Memastikan pembeli adalah pengguna yang login.
+    if (
+      pengguna.peran !== "pembeli" ||
+      String(pengguna.id) !== String(data.pembeliId)
+    ) {
+      throw new HttpError(
+        403,
+        "ROLE_FORBIDDEN",
+        "Pembeli tidak diizinkan membuat pesanan ini.",
+      );
+    }
+
+    // ----------------------------------------------
+    // 2. MEMERIKSA SELURUH PENAWARAN
+    // ----------------------------------------------
+
+    const detail = [];
+
+    let penyediaId;
+    let totalNormal = 0n;
+
+    for (const baris of data.items) {
+      const hasil = await client.query(
+        `
+          SELECT p.*
+          FROM penawaran p
+          JOIN penyedia py
+            ON py.id = p.penyedia_id
+          JOIN pengguna u
+            ON u.id = py.pengguna_id
+          WHERE p.id = $1
+            AND u.peran = 'penyedia'
+            AND u.aktif = TRUE
+            AND py.status_verifikasi = 'terverifikasi'
+          FOR UPDATE OF p
+        `,
+        [baris.penawaranId],
+      );
+
+      if (!hasil.rowCount) {
+        throw new HttpError(
+          404,
+          "OFFER_NOT_FOUND",
+          "Penawaran tidak ditemukan.",
+        );
+      }
+
+      const item = hasil.rows[0];
+
+      // --------------------------------------------
+      // 3. MEMERIKSA MASA BERLAKU PENAWARAN
+      // --------------------------------------------
+
+      const waktu = await client.query(
+        `
+          SELECT
+            $1::timestamptz > clock_timestamp()
+            AS belum_berakhir
+        `,
+        [item.berakhir_pada],
+      );
+
+      if (item.status !== "aktif" || !waktu.rows[0].belum_berakhir) {
+        throw new HttpError(
+          409,
+          "OFFER_UNAVAILABLE",
+          "Penawaran tidak tersedia.",
+        );
+      }
+
+      // --------------------------------------------
+      // 4. MEMERIKSA KETERSEDIAAN STOK
+      // --------------------------------------------
+
+      if (item.stok < baris.kuantitas) {
+        throw new HttpError(
+          409,
+          "INSUFFICIENT_STOCK",
+          `Stok ${item.nama} tidak mencukupi.`,
+        );
+      }
+
+      // --------------------------------------------
+      // 5. MEMASTIKAN SATU PENYEDIA
+      // --------------------------------------------
+
+      penyediaId ??= String(item.penyedia_id);
+
+      if (penyediaId !== String(item.penyedia_id)) {
+        throw new HttpError(
+          409,
+          "MIXED_PROVIDER",
+          "Satu pesanan harus dari satu penyedia.",
+        );
+      }
+
+      // --------------------------------------------
+      // 6. MEMERIKSA BATAS NILAI TRANSAKSI
+      // --------------------------------------------
+
+      totalNormal += BigInt(item.harga_normal) * BigInt(baris.kuantitas);
+
+      if (totalNormal > 999999999999n) {
+        throw new HttpError(
+          409,
+          "ORDER_TOTAL_LIMIT",
+          "Total melampaui kapasitas skema.",
+        );
+      }
+
+      detail.push({
+        ...baris,
+        item,
+      });
+    }
+
+    // ----------------------------------------------
+    // 7. MEMBUAT HEADER PESANAN
+    // ----------------------------------------------
+
+    const pesanan = await client.query(
+      `
+        INSERT INTO pesanan (
+          pembeli_id,
+          penyedia_id
+        )
+        VALUES ($1, $2)
+        RETURNING id
+      `,
+      [pembeli.rows[0].id, penyediaId],
+    );
+
+    const id = pesanan.rows[0].id;
+
+    // ----------------------------------------------
+    // 8. MENYIMPAN DETAIL DAN SNAPSHOT
+    // ----------------------------------------------
+
+    for (const { item, kuantitas } of detail) {
+      await client.query(
+        `
+          INSERT INTO detail_pesanan (
+            pesanan_id,
+            penawaran_id,
+            penyedia_id,
+            kuantitas,
+            harga_normal_satuan,
+            harga_penawaran_satuan,
+            nama_penawaran,
+            satuan
+          )
+          VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+        `,
+        [
+          id,
+          item.id,
+          penyediaId,
+          kuantitas,
+          item.harga_normal,
+          item.harga_penawaran,
+          item.nama,
+          item.satuan,
+        ],
+      );
+
+      // --------------------------------------------
+      // 9. MENGURANGI STOK PENAWARAN
+      // --------------------------------------------
+
+      await client.query(
+        `
+          UPDATE penawaran
+          SET
+            stok = stok - $1,
+            status = CASE
+              WHEN stok - $1 = 0 THEN 'habis'
+              ELSE status
+            END
+          WHERE id = $2
+        `,
+        [kuantitas, item.id],
+      );
+    }
+
+    // ----------------------------------------------
+    // 10. MENGHITUNG TOTAL TRANSAKSI
+    // ----------------------------------------------
+
+    await client.query(
+      `
+        UPDATE pesanan ps
+        SET
+          total_transaksi = r.total,
+          nilai_stok_terselamatkan = r.nilai_stok
+        FROM (
+          SELECT
+            SUM(subtotal) AS total,
+            SUM(nilai_stok) AS nilai_stok
+          FROM detail_pesanan
+          WHERE pesanan_id = $1
+        ) r
+        WHERE ps.id = $1
+      `,
+      [id],
+    );
+
+    // ----------------------------------------------
+    // 11. MENGEMBALIKAN DETAIL PESANAN
+    // ----------------------------------------------
+
+    return bacaDetail(id, client, pengguna);
+  });
+}

@@ -1,3 +1,5 @@
+import { createHash } from "node:crypto";
+
 export class HttpError extends Error {
   constructor(status, code, message) {
     super(message);
@@ -8,8 +10,8 @@ export class HttpError extends Error {
 }
 
 const STATUS_PENAWARAN = new Set(["draft", "aktif", "habis", "kedaluwarsa"]);
-
 const BATAS_ID_POSTGRES = 9223372036854775807n;
+const BATAS_FOTO = 409600;
 
 export const salah = (pesan) => {
   throw new HttpError(400, "VALIDATION_ERROR", pesan);
@@ -178,6 +180,72 @@ function waktuValid(nilai) {
   return tanggal.toISOString();
 }
 
+function fotoValid(nilai) {
+  if (nilai === null) {
+    return {
+      foto: null,
+      fotoTipe: null,
+      fotoHash: null,
+    };
+  }
+
+  if (typeof nilai !== "string") {
+    salah("foto wajib berupa Data URL atau null.");
+  }
+
+  const cocok =
+    /^data:(image\/(?:jpeg|png|webp));base64,([A-Za-z0-9+/]+={0,2})$/.exec(
+      nilai,
+    );
+
+  if (!cocok) {
+    salah("Format foto harus JPEG, PNG, atau WebP yang valid.");
+  }
+
+  const fotoTipe = cocok[1];
+  const base64 = cocok[2];
+  const foto = Buffer.from(base64, "base64");
+
+  if (
+    foto.length === 0 ||
+    foto.length > BATAS_FOTO ||
+    foto.toString("base64") !== base64
+  ) {
+    salah("Ukuran foto maksimal 400 KB atau data foto tidak valid.");
+  }
+
+  let formatSesuai = false;
+
+  if (fotoTipe === "image/jpeg") {
+    formatSesuai =
+      foto.length >= 3 &&
+      foto[0] === 0xff &&
+      foto[1] === 0xd8 &&
+      foto[2] === 0xff;
+  } else if (fotoTipe === "image/png") {
+    formatSesuai =
+      foto.length >= 8 &&
+      foto
+        .subarray(0, 8)
+        .equals(Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]));
+  } else if (fotoTipe === "image/webp") {
+    formatSesuai =
+      foto.length >= 12 &&
+      foto.toString("ascii", 0, 4) === "RIFF" &&
+      foto.toString("ascii", 8, 12) === "WEBP";
+  }
+
+  if (!formatSesuai) {
+    salah("Isi foto tidak sesuai dengan format file yang dikirim.");
+  }
+
+  return {
+    foto,
+    fotoTipe,
+    fotoHash: createHash("sha256").update(foto).digest("hex"),
+  };
+}
+
 export function penawaranValid(body) {
   objekValid(body, [
     "penyediaId",
@@ -189,6 +257,8 @@ export function penawaranValid(body) {
     "satuan",
     "status",
     "berakhirPada",
+    "foto",
+    "versi",
   ]);
 
   const hasil = {
@@ -215,9 +285,22 @@ export function penawaranValid(body) {
     salah("status tidak dikenal.");
   }
 
+  const fotoDiubah = Object.hasOwn(body, "foto");
+  const fotoData = fotoDiubah
+    ? fotoValid(body.foto)
+    : { foto: undefined, fotoTipe: undefined, fotoHash: undefined };
+
+  const versi =
+    body.versi === undefined
+      ? null
+      : angkaValid(body.versi, "versi", 0, Number.MAX_SAFE_INTEGER);
+
   return {
     ...hasil,
     berakhirPada: waktuValid(body.berakhirPada),
+    fotoDiubah,
+    ...fotoData,
+    versi,
   };
 }
 
