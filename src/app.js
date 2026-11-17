@@ -12,6 +12,7 @@ import dashboardRouter from "./routes/dashboard.js";
 import { catatRequest } from "./middleware/catat-request.js";
 import { routeTidakDitemukan } from "./middleware/not-found.js";
 import { tanganiError } from "./middleware/error-handler.js";
+
 const app = express();
 const produksi = process.env.NODE_ENV === "production";
 const hop = process.env.TRUST_PROXY_HOPS ?? "0";

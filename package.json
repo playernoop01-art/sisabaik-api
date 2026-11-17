@@ -8,7 +8,7 @@
     "start": "node server.js",
     "start:local": "node --env-file=.env scripts/jalankan-lokal.js",
     "build": "npm --prefix frontend run build",
-    "demo:cloud:init": "node --env-file=.env.cloud scripts/siapkan-democloud.js",
+    "demo:cloud:init": "node --env-file=.env.cloud scripts/siapkan-demo-cloud.js",
     "deploy:test": "node scripts/uji-deployment.js",
     "db:check": "node --env-file=.env scripts/check-db.js",
     "db:order": "node --env-file=.env scripts/create-order.js",
@@ -29,7 +29,7 @@
   "dependencies": {
     "bcryptjs": "3.0.3",
     "express": "5.1.0",
-    "express-rate-limit": "^8.7.3",
+    "express-rate-limit": "8.7.3",
     "helmet": "8.1.0",
     "jsonwebtoken": "9.0.3",
     "pg": "8.16.3",

@@ -9,6 +9,7 @@ const PesananView = () => import("../views/PesananView.vue");
 const DetailPesananView = () => import("../views/DetailPesananView.vue");
 const DashboardView = () => import("../views/DashboardView.vue");
 const InfoView = () => import("../views/InfoView.vue");
+
 export const router = createRouter({
   history: createWebHashHistory(),
   routes: [
